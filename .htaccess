@@ -1,0 +1,30 @@
+# Apache Configuration for The Cybernetic Signal (/signal/)
+# Ensures optimal caching, MIME types, and relative asset delivery
+
+<IfModule mod_mime.c>
+  AddType text/html .html
+  AddType text/css .css
+  AddType application/javascript .js
+  AddType audio/wav .wav
+  AddType audio/ogg .ogg
+  AddType audio/mpeg .mp3
+  AddType image/svg+xml .svg
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css application/javascript application/json image/svg+xml
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Cross-Origin resource sharing for web audio
+  Header set Access-Control-Allow-Origin "*"
+</IfModule>
+
+# Fallback to index.html for single-page routing if needed
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /signal/
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^(.*)$ index.html [L]
+</IfModule>
