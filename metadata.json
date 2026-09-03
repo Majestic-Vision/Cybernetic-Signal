@@ -1,0 +1,6 @@
+{
+  "name": "The Cybernetic Signal",
+  "description": "Retro-futuristic standalone web audio player, transmission archive, and synchronized transcript console for The Cybernetic Signal podcast.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
