@@ -6,7 +6,7 @@
 // ==========================================
 // 1. TRANSMISSIONS DATA
 // ==========================================
-const TRANSMISSIONS_DATA = [
+const DEFAULT_TRANSMISSIONS_DATA = [
   {
     id: "trans-01",
     episodeNumber: "01",
@@ -154,6 +154,196 @@ const TRANSMISSIONS_DATA = [
     ]
   }
 ];
+
+let TRANSMISSIONS_DATA = [...DEFAULT_TRANSMISSIONS_DATA];
+
+// ==========================================
+// 1.5 RSS PODCAST INGESTION ENGINE
+// ==========================================
+class PodcastRssParser {
+  /**
+   * Fetches and parses an RSS feed URL via CORS proxies with automatic fallbacks
+   */
+  static async fetchFeedXml(feedUrl) {
+    const proxies = [
+      (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+      (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+      (url) => url // Direct attempt if host has native CORS
+    ];
+
+    let lastError = null;
+    for (const proxyFn of proxies) {
+      try {
+        const targetUrl = proxyFn(feedUrl);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+        const response = await fetch(targetUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const xmlText = await response.text();
+        if (xmlText && xmlText.includes("<rss") || xmlText.includes("<channel") || xmlText.includes("<feed")) {
+          return xmlText;
+        }
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError || new Error("Failed to retrieve valid XML from feed URL.");
+  }
+
+  /**
+   * Parses standard RSS 2.0 XML string into the Cybernetic Signal episode schema
+   */
+  static parseRssXml(xmlString, feedUrl) {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+
+    const parseError = xmlDoc.querySelector("parsererror");
+    if (parseError) {
+      throw new Error(`XML parsing error: ${parseError.textContent.slice(0, 100)}`);
+    }
+
+    const channel = xmlDoc.querySelector("channel") || xmlDoc.querySelector("feed");
+    if (!channel) throw new Error("No valid <channel> or <feed> node found in RSS document.");
+
+    // Extract default channel artwork
+    let defaultArtwork = "https://lh3.googleusercontent.com/aida-public/AB6AXuBU_XI5MpwJr9cvFJF2sLOE-2w5uAqUhwvYylbAmn7wK778s6FfWEaYDSkWNJ0Jx5mWPc2DN-HxytbKqqkrWh_3RBK82LrBzibT_dA5oH-YwTliY928v9simi5poL1W5XhbrrHHR5Dg12RSc1l7wKTNL5912rSfsoZj_2f6tyfIqO0ip5xs1-UlZTA87r7Vl48QrjSkhHBYdOqyxTIR3SPk-2X1S7UZ2OyhgHIwuPb_TgLY_BqW5rtL";
+    const itunesImage = channel.querySelector("itunes\\:image, image");
+    if (itunesImage) {
+      defaultArtwork = itunesImage.getAttribute("href") || itunesImage.querySelector("url")?.textContent || defaultArtwork;
+    }
+
+    const items = Array.from(channel.querySelectorAll("item, entry"));
+    if (!items || items.length === 0) {
+      throw new Error("No podcast dispatches or episodes found in RSS feed.");
+    }
+
+    const episodes = [];
+
+    items.forEach((item, index) => {
+      // Audio enclosure / media
+      let audioUrl = "";
+      const enclosure = item.querySelector("enclosure");
+      if (enclosure && enclosure.getAttribute("url")) {
+        audioUrl = enclosure.getAttribute("url");
+      } else {
+        const link = item.querySelector("link[type*='audio']");
+        if (link && link.getAttribute("href")) {
+          audioUrl = link.getAttribute("href");
+        }
+      }
+
+      // If no playable enclosure found, skip or use carrier tone
+      if (!audioUrl) {
+        audioUrl = "https://actions.google.com/sounds/v1/science_fiction/scifi_hum_loop.ogg";
+      }
+
+      // Clean title
+      const rawTitle = item.querySelector("title")?.textContent || `Dispatch #${index + 1}`;
+      const title = rawTitle.replace(/^<!\[CDATA\[|\]\]>$/g, "").trim();
+
+      // Dates & formatting
+      const pubDateText = item.querySelector("pubDate, published, updated")?.textContent || "";
+      const pubDate = pubDateText ? new Date(pubDateText) : new Date();
+      const dateFormatted = !isNaN(pubDate.getTime())
+        ? `${pubDate.getFullYear()}.${String(pubDate.getMonth() + 1).padStart(2, "0")}.${String(pubDate.getDate()).padStart(2, "0")}`
+        : "2026.08.14";
+
+      // Duration
+      let durationSeconds = 1800;
+      let durationFormatted = "30:00";
+      const itunesDuration = item.querySelector("itunes\\:duration")?.textContent?.trim();
+      if (itunesDuration) {
+        if (itunesDuration.includes(":")) {
+          const parts = itunesDuration.split(":").map(Number);
+          if (parts.length === 3) {
+            durationSeconds = (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+            durationFormatted = `${String(parts[0] * 60 + parts[1]).padStart(2, "0")}:${String(parts[2]).padStart(2, "0")}`;
+          } else if (parts.length === 2) {
+            durationSeconds = (parts[0] * 60) + parts[1];
+            durationFormatted = `${String(parts[0]).padStart(2, "0")}:${String(parts[1]).padStart(2, "0")}`;
+          }
+        } else if (!isNaN(Number(itunesDuration))) {
+          durationSeconds = parseInt(itunesDuration, 10);
+          const mins = Math.floor(durationSeconds / 60);
+          const secs = durationSeconds % 60;
+          durationFormatted = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+        }
+      }
+
+      // Artwork
+      const epImage = item.querySelector("itunes\\:image")?.getAttribute("href") || defaultArtwork;
+
+      // Description / Dossier
+      const rawDesc = item.querySelector("description, summary, content")?.textContent || "Autonomous audio dispatch transmitted across the neural carrier network.";
+      const cleanDesc = rawDesc
+        .replace(/<[^>]*>?/gm, "")
+        .replace(/^<!\[CDATA\[|\]\]>$/g, "")
+        .trim();
+      const dossierAbstract = cleanDesc.slice(0, 320) + (cleanDesc.length > 320 ? "..." : "");
+
+      // Episode number & frequency calculation
+      const epNum = String(items.length - index).padStart(2, "0");
+      const freqVal = (432.0 + (index * 0.7) % 5.0).toFixed(1);
+
+      // Category derivation
+      let category = "NEURAL THEORY";
+      const lowerText = (title + " " + cleanDesc).toLowerCase();
+      if (lowerText.includes("swarm") || lowerText.includes("multi-agent") || lowerText.includes("mesh")) {
+        category = "SWARM LOGIC";
+      } else if (lowerText.includes("executive") || lowerText.includes("neuro") || lowerText.includes("cognitive") || lowerText.includes("human")) {
+        category = "EXECUTIVE";
+      }
+
+      // Generate structured takeaways and dossier from text
+      const sentences = cleanDesc.split(/\.\s+/).filter(s => s.length > 20 && s.length < 180);
+      const keyTakeaways = sentences.length >= 3
+        ? sentences.slice(0, 4)
+        : [
+            `Autonomous dispatch processed from remote feed enclosure.`,
+            `High fidelity direct audio stream locked to ${freqVal} MHz.`,
+            `Temporal synchronization established at ${dateFormatted}.`,
+            `Carrier modulation active across decentralized telemetry nodes.`
+          ];
+
+      const pullquote = sentences[0] || "Transmitted autonomously through recursive feedback topologies.";
+
+      episodes.push({
+        id: `rss-ep-${index + 1}`,
+        episodeNumber: epNum,
+        title: title,
+        subtitle: `Dispatched via ${feedUrl.split('/')[2] || 'RSS Mesh Network'}`,
+        durationFormatted: durationFormatted,
+        durationSeconds: durationSeconds,
+        date: dateFormatted,
+        frequencyMhz: freqVal,
+        category: category,
+        status: "LIVE UPLINK // VERIFIED",
+        artworkUrl: epImage,
+        audioUrl: audioUrl,
+        dossierAbstract: dossierAbstract,
+        pullquote: pullquote,
+        pullquoteSpeaker: "SIGNAL OPERATOR",
+        keyTakeaways: keyTakeaways,
+        notesSpecs: [
+          { label: "STREAM PROTOCOL", value: "HTML5 Enclosure Direct Stream" },
+          { label: "CARRIER BANDWIDTH", value: `${freqVal} MHz // QAM-256` },
+          { label: "FEED HOST", value: feedUrl.split('/')[2] || "External CDN" },
+          { label: "AUDIO ENCLOSURE", value: audioUrl.split('.').pop()?.toUpperCase() || "MP3" }
+        ],
+        transcript: [
+          { id: `t-rss-${index}-1`, timeFormatted: "00:00", seconds: 0, speaker: "SIGNAL ARCHIVIST", text: `Commencing transmission of "${title}". Audio carrier initialized.` },
+          { id: `t-rss-${index}-2`, timeFormatted: "00:15", seconds: 15, speaker: "SIGNAL TRANSMISSION", text: dossierAbstract.slice(0, 200) || "Streaming live audio from external enclosure...", isKeyInsight: true },
+          { id: `t-rss-${index}-3`, timeFormatted: "00:45", seconds: 45, speaker: "SPECTRAL MONITOR", text: "Spectral harmonics stabilized. Continuous playback active." }
+        ]
+      });
+    });
+
+    return episodes;
+  }
+}
 
 // ==========================================
 // 2. CYBERNETIC AUDIO ENGINE (VANILLA ES6)
@@ -455,11 +645,31 @@ const App = {
   init() {
     this.cacheDom();
     this.bindEvents();
+    this.restoreCachedFeed();
     this.renderActiveTransmission(false);
     this.renderArchiveList();
     this.startVisualizationLoop();
     this.startClock();
     initFirebaseService().catch(() => {});
+  },
+
+  async restoreCachedFeed() {
+    try {
+      const savedFeedUrl = localStorage.getItem("cybernetic_signal_custom_feed_url");
+      if (savedFeedUrl) {
+        console.info("[Cybernetic Signal] Restoring RSS feed from cache:", savedFeedUrl);
+        const xml = await PodcastRssParser.fetchFeedXml(savedFeedUrl);
+        const episodes = PodcastRssParser.parseRssXml(xml, savedFeedUrl);
+        if (episodes && episodes.length > 0) {
+          TRANSMISSIONS_DATA = episodes;
+          this.activeId = episodes[0].id;
+          this.renderActiveTransmission(false);
+          this.renderArchiveList();
+        }
+      }
+    } catch (err) {
+      console.info("[Cybernetic Signal] Cached feed fetch deferred/offline, using standard transmission bank:", err);
+    }
   },
 
   cacheDom() {
@@ -499,6 +709,21 @@ const App = {
       volumeSlider: document.getElementById("volume-slider"),
       btnDownloadStems: document.getElementById("btn-download-stems"),
       btnShareEpisode: document.getElementById("btn-share-episode"),
+
+      // Feed Uplink Modal & Controls
+      archiveCountBadge: document.getElementById("archive-count-badge"),
+      btnOpenFeedModal: document.getElementById("btn-open-feed-modal"),
+      feedModalOverlay: document.getElementById("feed-modal-overlay"),
+      btnCloseFeedModal: document.getElementById("btn-close-feed-modal"),
+      btnCancelFeed: document.getElementById("btn-cancel-feed"),
+      rssSyncForm: document.getElementById("rss-sync-form"),
+      rssFeedUrlInput: document.getElementById("rss-feed-url-input"),
+      btnSubmitFeed: document.getElementById("btn-submit-feed"),
+      submitFeedBtnText: document.getElementById("submit-feed-btn-text"),
+      rssSyncStatus: document.getElementById("rss-sync-status"),
+      btnSampleFeed: document.getElementById("btn-sample-feed"),
+      btnScifiFeed: document.getElementById("btn-scifi-feed"),
+      btnRestoreDefaultTransmissions: document.getElementById("btn-restore-default-transmissions"),
 
       // Archive
       archiveFilterBtns: document.querySelectorAll(".filter-btn"),
@@ -651,6 +876,120 @@ const App = {
       }
     });
 
+    // RSS Feed Uplink Modal Handlers
+    if (this.dom.btnOpenFeedModal) {
+      this.dom.btnOpenFeedModal.addEventListener("click", () => {
+        if (this.dom.feedModalOverlay) this.dom.feedModalOverlay.style.display = "flex";
+      });
+    }
+
+    const closeFeedModal = () => {
+      if (this.dom.feedModalOverlay) this.dom.feedModalOverlay.style.display = "none";
+      if (this.dom.rssSyncStatus) this.dom.rssSyncStatus.style.display = "none";
+    };
+
+    if (this.dom.btnCloseFeedModal) this.dom.btnCloseFeedModal.addEventListener("click", closeFeedModal);
+    if (this.dom.btnCancelFeed) this.dom.btnCancelFeed.addEventListener("click", closeFeedModal);
+    if (this.dom.feedModalOverlay) {
+      this.dom.feedModalOverlay.addEventListener("click", (e) => {
+        if (e.target === this.dom.feedModalOverlay) closeFeedModal();
+      });
+    }
+
+    // Preset feed quick loaders
+    if (this.dom.btnSampleFeed) {
+      this.dom.btnSampleFeed.addEventListener("click", () => {
+        if (this.dom.rssFeedUrlInput) {
+          this.dom.rssFeedUrlInput.value = this.dom.btnSampleFeed.dataset.feed;
+        }
+      });
+    }
+
+    if (this.dom.btnScifiFeed) {
+      this.dom.btnScifiFeed.addEventListener("click", () => {
+        if (this.dom.rssFeedUrlInput) {
+          this.dom.rssFeedUrlInput.value = this.dom.btnScifiFeed.dataset.feed;
+        }
+      });
+    }
+
+    if (this.dom.btnRestoreDefaultTransmissions) {
+      this.dom.btnRestoreDefaultTransmissions.addEventListener("click", () => {
+        try {
+          localStorage.removeItem("cybernetic_signal_custom_feed_url");
+        } catch (_) {}
+        TRANSMISSIONS_DATA = [...DEFAULT_TRANSMISSIONS_DATA];
+        this.activeId = TRANSMISSIONS_DATA[0].id;
+        this.renderActiveTransmission(false);
+        this.renderArchiveList();
+        this.showToast("CATALOG RESTORED: DEFAULT TRANSMISSIONS");
+        closeFeedModal();
+      });
+    }
+
+    // RSS Feed Submit Sync Handler
+    if (this.dom.rssSyncForm) {
+      this.dom.rssSyncForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const feedUrl = this.dom.rssFeedUrlInput.value.trim();
+        if (!feedUrl) return;
+
+        const submitBtn = this.dom.btnSubmitFeed;
+        const btnText = this.dom.submitFeedBtnText;
+        const statusBox = this.dom.rssSyncStatus;
+
+        if (submitBtn) submitBtn.disabled = true;
+        if (btnText) btnText.textContent = "SYNCHRONIZING...";
+        if (statusBox) {
+          statusBox.style.display = "block";
+          statusBox.style.color = "var(--accent-cyan)";
+          statusBox.textContent = "QUERYING PODCAST RSS FEED VIA TELEMETRY PROXY...";
+        }
+
+        try {
+          const xml = await PodcastRssParser.fetchFeedXml(feedUrl);
+          if (statusBox) statusBox.textContent = "PARSING XML ENCLOSURES & AUDIO STREAMS...";
+          const parsedEpisodes = PodcastRssParser.parseRssXml(xml, feedUrl);
+
+          if (parsedEpisodes.length === 0) {
+            throw new Error("No playable audio dispatches found in this feed.");
+          }
+
+          TRANSMISSIONS_DATA = parsedEpisodes;
+          this.activeId = parsedEpisodes[0].id;
+
+          // Cache feed URL in localStorage for persistent reloads
+          try {
+            localStorage.setItem("cybernetic_signal_custom_feed_url", feedUrl);
+          } catch (_) {}
+
+          this.renderActiveTransmission(false);
+          this.renderArchiveList();
+          this.showToast(`FEED SYNCED: ${parsedEpisodes.length} DISPATCHES READY`);
+
+          if (statusBox) {
+            statusBox.style.color = "var(--accent-gold)";
+            statusBox.textContent = `SUCCESS // ${parsedEpisodes.length} AUDIO DISPATCHES INGESTED`;
+          }
+
+          setTimeout(() => {
+            closeFeedModal();
+          }, 1200);
+
+        } catch (err) {
+          console.error("RSS parsing exception:", err);
+          if (statusBox) {
+            statusBox.style.color = "var(--accent-crimson)";
+            statusBox.textContent = `ERR // ${err.message || "Unable to parse feed XML."}`;
+          }
+          this.showToast("FEED SYNC REJECTED");
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
+          if (btnText) btnText.textContent = "INITIALIZE UPLINK";
+        }
+      });
+    }
+
     // Audio Engine Callbacks
     this.engine.onTimeUpdateCallback = (current, duration) => {
       this.currentTime = current;
@@ -713,6 +1052,10 @@ const App = {
   },
 
   renderArchiveList() {
+    if (this.dom.archiveCountBadge) {
+      this.dom.archiveCountBadge.textContent = `${TRANSMISSIONS_DATA.length} EPISODES`;
+    }
+
     const filtered = this.activeCategory === "ALL"
       ? TRANSMISSIONS_DATA
       : TRANSMISSIONS_DATA.filter(t => t.category === this.activeCategory);

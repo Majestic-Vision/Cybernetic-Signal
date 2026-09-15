@@ -232,7 +232,13 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-gold)" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
               Transmission Archive
             </h2>
-            <span class="font-mono" style="font-size: 11px; color: var(--accent-gold); font-weight: 700;">4 DISPATCHES LOADED</span>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <span id="archive-count-badge" class="font-mono" style="font-size: 11px; color: var(--accent-gold); font-weight: 700;">4 DISPATCHES LOADED</span>
+              <button class="action-btn" id="btn-open-feed-modal" title="Sync live RSS feed from RedCircle, Spotify, or Substack" style="background: rgba(0, 240, 255, 0.08); border-color: rgba(0, 240, 255, 0.4); color: var(--accent-cyan); padding: 0.25rem 0.5rem; font-size: 11px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 0 1 9 9"></path><path d="M4 4a16 16 0 0 1 16 16"></path><circle cx="5" cy="19" r="1"></circle></svg>
+                <span>FEED UPLINK</span>
+              </button>
+            </div>
           </div>
 
           <!-- Category Filter Bar -->
@@ -398,6 +404,57 @@
   <div class="system-toast" id="system-toast" style="display: none;">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
     <span id="toast-msg">CARRIER TUNED</span>
+  </div>
+
+  <!-- RSS Feed Sync Modal -->
+  <div class="modal-overlay" id="feed-modal-overlay" style="display: none;">
+    <div class="modal-window" id="feed-modal-window">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <div class="pulse-cyan" style="width: 8px; height: 8px;"></div>
+          <span class="font-mono" style="font-weight: 700; color: var(--accent-gold); letter-spacing: 0.05em;">PODCAST RSS UPLINK // AUDIO SYNC</span>
+        </div>
+        <button class="modal-close-btn" id="btn-close-feed-modal" title="Close modal">&times;</button>
+      </div>
+      
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 1rem;">
+          Connect your live podcast RSS feed (from <strong style="color: var(--accent-cyan);">RedCircle</strong>, <strong style="color: var(--accent-cyan);">Spotify for Podcasters</strong>, <strong style="color: var(--accent-cyan);">Substack</strong>, or any compliant RSS 2.0 host). The player dynamically extracts audio streams, titles, artwork, timestamps, and show notes.
+        </p>
+
+        <form id="rss-sync-form" style="display: flex; flex-direction: column; gap: 0.75rem;">
+          <label for="rss-feed-url-input" class="font-mono" style="font-size: 11px; color: var(--accent-cyan); text-transform: uppercase;">
+            Feed Endpoint URL:
+          </label>
+          <div class="terminal-input-wrap">
+            <span class="terminal-prefix">&gt;</span>
+            <input type="url" class="terminal-input" id="rss-feed-url-input" placeholder="https://api.podcache.net/shows/.../feed.xml" style="font-size: 12px;" required>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem;">
+            <button type="button" class="preset-feed-btn" id="btn-sample-feed" data-feed="https://feeds.redcircle.com/2b36551b-1025-4cbb-ae5c-9c9ef47be15e">
+              RedCircle Demo
+            </button>
+            <button type="button" class="preset-feed-btn" id="btn-scifi-feed" data-feed="https://feeds.buzzsprout.com/2143093.rss">
+              Sci-Fi Audio Feed
+            </button>
+            <button type="button" class="preset-feed-btn" id="btn-restore-default-transmissions" style="margin-left: auto; border-color: rgba(255, 255, 255, 0.2); color: var(--text-muted);">
+              Reset Defaults
+            </button>
+          </div>
+
+          <div id="rss-sync-status" class="font-mono" style="font-size: 11px; padding: 0.5rem; background: rgba(0,0,0,0.4); border: 1px solid var(--border-color); display: none;"></div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 0.75rem;">
+            <button type="button" class="terminal-submit-btn" id="btn-cancel-feed" style="background: transparent; border-color: var(--border-color); color: var(--text-secondary);">Cancel</button>
+            <button type="submit" class="terminal-submit-btn" id="btn-submit-feed">
+              <span id="submit-feed-btn-text">INITIALIZE UPLINK</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 
   <!-- Standalone Vanilla ES6 Script -->
