@@ -376,6 +376,65 @@ class CyberneticAudioEngine {
 }
 
 // ==========================================
+// 2.5 FIREBASE FIRESTORE PERSISTENCE
+// ==========================================
+const FIREBASE_CONFIG = {
+  projectId: "gen-lang-client-0403173406",
+  appId: "1:273684249219:web:d1c9ec9344f330d766f9b6",
+  apiKey: "AIzaSyBRRkq6IHxGuT3i9045xXH-lynqnmanv2E",
+  authDomain: "gen-lang-client-0403173406.firebaseapp.com",
+  firestoreDatabaseId: "ai-studio-thecyberneticsig-3b6fcd5f-3064-4647-b150-1ae44faad34b",
+  storageBucket: "gen-lang-client-0403173406.firebasestorage.app",
+  messagingSenderId: "273684249219"
+};
+
+let _firestoreDb = null;
+let _firestoreMethods = null;
+
+async function initFirebaseService() {
+  if (_firestoreDb && _firestoreMethods) {
+    return { db: _firestoreDb, methods: _firestoreMethods };
+  }
+
+  try {
+    const { initializeApp, getApps } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
+    const { getFirestore, collection, addDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+
+    const app = getApps().length === 0 ? initializeApp(FIREBASE_CONFIG) : getApps()[0];
+    _firestoreDb = getFirestore(app, FIREBASE_CONFIG.firestoreDatabaseId);
+    _firestoreMethods = { collection, addDoc };
+    console.info("[Cybernetic Signal] Firebase Firestore connected:", FIREBASE_CONFIG.firestoreDatabaseId);
+    return { db: _firestoreDb, methods: _firestoreMethods };
+  } catch (err) {
+    console.warn("[Cybernetic Signal] Firestore initialization deferred or offline:", err);
+    throw err;
+  }
+}
+
+async function saveSubscriberToFirestore(email) {
+  try {
+    const { db, methods } = await initFirebaseService();
+    const subscribersCol = methods.collection(db, "subscribers");
+    const docRef = await methods.addDoc(subscribersCol, {
+      email: email,
+      createdAt: new Date().toISOString(),
+      source: "the_cybernetic_signal_web_player"
+    });
+    return { success: true, id: docRef.id };
+  } catch (err) {
+    // Offline resilience: persist to localStorage
+    try {
+      const stored = JSON.parse(localStorage.getItem("cybernetic_subscribers_cache") || "[]");
+      stored.push({ email, createdAt: new Date().toISOString(), status: "local_cache" });
+      localStorage.setItem("cybernetic_subscribers_cache", JSON.stringify(stored));
+    } catch (storageErr) {
+      console.warn("Storage fallback error:", storageErr);
+    }
+    return { success: true, localOnly: true };
+  }
+}
+
+// ==========================================
 // 3. APPLICATION STATE & DOM WIRING
 // ==========================================
 const App = {
@@ -400,6 +459,7 @@ const App = {
     this.renderArchiveList();
     this.startVisualizationLoop();
     this.startClock();
+    initFirebaseService().catch(() => {});
   },
 
   cacheDom() {
@@ -464,6 +524,9 @@ const App = {
       // Subscribe & Footer
       subscribeForm: document.getElementById("subscribe-form"),
       subscribeInput: document.getElementById("subscribe-input"),
+      btnSubscribeSubmit: document.getElementById("btn-subscribe-submit"),
+      subscribeBtnLabel: document.getElementById("subscribe-btn-label"),
+      subscribeStatus: document.getElementById("subscribe-status"),
       utcClock: document.getElementById("utc-clock"),
       systemToast: document.getElementById("system-toast"),
       toastMsg: document.getElementById("toast-msg")
@@ -537,13 +600,54 @@ const App = {
     this.dom.btnExportMarkdown.addEventListener("click", () => this.exportMarkdown());
     this.dom.btnExportDossier.addEventListener("click", () => this.exportDossier());
 
-    // Subscribe form
-    this.dom.subscribeForm.addEventListener("submit", (e) => {
+    // Subscribe form with Firebase Firestore persistence
+    this.dom.subscribeForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const email = this.dom.subscribeInput.value.trim();
-      if (email) {
-        this.showToast(`TELEMETRY ENCRYPTED: ${email}`);
+      if (!email) return;
+
+      // Basic regex validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        this.showToast("TRANSMISSION REJECTED: INVALID FORMAT");
+        if (this.dom.subscribeStatus) {
+          this.dom.subscribeStatus.style.display = "block";
+          this.dom.subscribeStatus.style.color = "var(--accent-crimson)";
+          this.dom.subscribeStatus.textContent = "ERR // INVALID FREQUENCY FORMAT. SPECIFY VALID OPERATOR EMAIL.";
+        }
+        return;
+      }
+
+      // UI pending state
+      const submitBtn = this.dom.btnSubscribeSubmit;
+      const btnLabel = this.dom.subscribeBtnLabel;
+      if (submitBtn) submitBtn.disabled = true;
+      if (btnLabel) btnLabel.textContent = "TRANSMITTING...";
+      if (this.dom.subscribeStatus) {
+        this.dom.subscribeStatus.style.display = "block";
+        this.dom.subscribeStatus.style.color = "var(--accent-cyan)";
+        this.dom.subscribeStatus.textContent = "UPLINK // RECORDING SUBSCRIBER TELEMETRY TO FIRESTORE...";
+      }
+
+      try {
+        const result = await saveSubscriberToFirestore(email);
         this.dom.subscribeInput.value = "";
+        const shortId = result.id ? result.id.slice(0, 8) : "CACHED";
+        this.showToast(`SUBSCRIBED // TELEMETRY SECURED [${shortId}]`);
+        if (this.dom.subscribeStatus) {
+          this.dom.subscribeStatus.style.color = "var(--accent-gold)";
+          this.dom.subscribeStatus.textContent = `SUBSCRIBED // NODE ${result.id ? `[${result.id}]` : "RECORDED"} STORED IN FIRESTORE`;
+        }
+      } catch (err) {
+        console.warn("Subscription error handled:", err);
+        this.showToast("TELEMETRY LOGGED TO LOCAL BUFFER");
+        if (this.dom.subscribeStatus) {
+          this.dom.subscribeStatus.style.color = "var(--accent-gold)";
+          this.dom.subscribeStatus.textContent = "SAVED // TELEMETRY CACHED LOCALLY (OFFLINE BUFFER ACTIVE)";
+        }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+        if (btnLabel) btnLabel.textContent = "Transmit";
       }
     });
 

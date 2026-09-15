@@ -1,0 +1,35 @@
+{
+  "entities": {
+    "subscribers": {
+      "title": "Subscribers",
+      "description": "Collection of subscriber email addresses to The Cybernetic Signal",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Subscriber email address"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp when subscription occurred"
+        },
+        "source": {
+          "type": "string",
+          "description": "Source terminal channel"
+        }
+      },
+      "required": ["email", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/subscribers/{subscriberId}": {
+      "allow": {
+        "read": false,
+        "create": "request.resource.data.email is string && request.resource.data.email.size() > 3 && request.resource.data.email.size() <= 254",
+        "update": false,
+        "delete": false
+      }
+    }
+  }
+}

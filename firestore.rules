@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /subscribers/{subscriberId} {
+      // Anyone can subscribe (create), with payload validation
+      allow create: if request.resource.data.email is string
+                    && request.resource.data.email.size() > 3
+                    && request.resource.data.email.size() <= 254;
+      // Protect subscriber privacy: cannot be read, updated, or deleted by public
+      allow read: if false;
+      allow update, delete: if false;
+    }
+  }
+}
